@@ -66,49 +66,76 @@ public partial class PTHttpClient
 		// needs to be callable due to add_child
 		Callable.From(() =>
 		{
-			// Workaround since callable dont support async
+			// Workaround since callable dont support async.
+			// Nothing may throw out of here: this is an async void, so an exception
+			// escaping it is raised on the synchronization context rather than on the
+			// returned Task, which terminates the process instead of failing the call.
+			// Every failure has to travel back through tcs so the caller can catch it.
 			async void a()
 			{
-				byte[] body = msg.Content != null ? await msg.Content.ReadAsByteArrayAsync() : [];
-
-				HttpRequest req = new()
+				HttpRequest? req = null;
+				try
 				{
-					DownloadChunkSize = DefaultDownloadChunkSize,
-					MaxRedirects = 0
-				};
+					byte[] body = msg.Content != null ? await msg.Content.ReadAsByteArrayAsync() : [];
 
-				Globals.Singleton.AddChild(req);
-
-				req.RequestCompleted += (result, responseCode, responseHeaders, responseBody) =>
-				{
-					HttpResponseMessage response = new((HttpStatusCode)responseCode)
+					req = new()
 					{
-						Content = new ByteArrayContent(responseBody)
+						DownloadChunkSize = DefaultDownloadChunkSize,
+						MaxRedirects = 0
 					};
 
-					foreach (string header in responseHeaders)
+					Globals.Singleton.AddChild(req);
+
+					HttpRequest request = req;
+					request.RequestCompleted += (result, responseCode, responseHeaders, responseBody) =>
 					{
-						string[] parts = header.Split(':', 2);
-						if (parts.Length == 2)
+						try
 						{
-							response.Headers.TryAddWithoutValidation(parts[0].Trim(), parts[1].Trim());
+							HttpResponseMessage response = new((HttpStatusCode)responseCode)
+							{
+								Content = new ByteArrayContent(responseBody)
+							};
+
+							foreach (string header in responseHeaders)
+							{
+								string[] parts = header.Split(':', 2);
+								if (parts.Length == 2)
+								{
+									response.Headers.TryAddWithoutValidation(parts[0].Trim(), parts[1].Trim());
+								}
+							}
+
+							request.QueueFree();
+							tcs.TrySetResult(response);
 						}
+						catch (Exception ex)
+						{
+							request.QueueFree();
+							tcs.TrySetException(ex);
+						}
+					};
+
+					if (msg.RequestUri == null)
+					{
+						throw new InvalidOperationException("URL is null");
 					}
 
-					req.QueueFree();
-					tcs.SetResult(response);
-				};
+					Error error = request.RequestRaw(
+						msg.RequestUri.ToString(),
+						[.. headers],
+						Enum.Parse<Godot.HttpClient.Method>(msg.Method.Method.ToLower().Capitalize()),
+						new ReadOnlySpan<byte>(body)
+					);
 
-				Error error = req.RequestRaw(
-					msg.RequestUri?.ToString() ?? throw new InvalidOperationException("URL is null"),
-					[.. headers],
-					Enum.Parse<Godot.HttpClient.Method>(msg.Method.Method.ToLower().Capitalize()),
-					new ReadOnlySpan<byte>(body)
-				);
-
-				if (error != Error.Ok)
+					if (error != Error.Ok)
+					{
+						throw new HttpRequestException($"HttpRequest failed with error: {error}");
+					}
+				}
+				catch (Exception ex)
 				{
-					throw new HttpRequestException($"HttpRequest failed with error: {error}");
+					req?.QueueFree();
+					tcs.TrySetException(ex);
 				}
 			}
 

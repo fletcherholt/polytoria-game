@@ -20,6 +20,8 @@ public partial class CreatorEntry : Node
 {
 	public const int CreatorPort = 24220;
 
+	private string? _projectToOpen;
+
 	public async override void _EnterTree()
 	{
 		Dictionary<string, string> cmdargs = Globals.ReadCmdArgs();
@@ -41,12 +43,12 @@ public partial class CreatorEntry : Node
 
 		GetViewport().GuiEmbedSubwindows = true;
 
-		// Open project
-		cmdargs.TryGetValue("proj", out string? creatorFilePath);
-		if (creatorFilePath != null)
-		{
-			_ = CreatorService.Singleton.CreateNewSession(creatorFilePath);
-		}
+		// Open project.
+		// This has to wait for _Ready: opening a project reaches Tabs.Singleton, and the
+		// creator UI has not been built yet during _EnterTree, so starting it here left
+		// the app sitting on the startup splash. The failure was invisible because the
+		// task was discarded, taking the exception with it.
+		cmdargs.TryGetValue("proj", out _projectToOpen);
 
 		// Import legacy world cmd arguments
 		cmdargs.TryGetValue("liin", out string? legacyImportIn);
@@ -61,6 +63,23 @@ public partial class CreatorEntry : Node
 		if (launchToken != null)
 		{
 			await PolyCreatorAPI.LoginWithToken(launchToken);
+		}
+	}
+
+	public async override void _Ready()
+	{
+		base._Ready();
+
+		if (_projectToOpen == null) return;
+
+		try
+		{
+			await CreatorService.Singleton.CreateNewSession(_projectToOpen);
+		}
+		catch (System.Exception ex)
+		{
+			PT.PrintErr(ex);
+			CreatorService.Interface.PopupAlert(ex.Message, "Could not open project");
 		}
 	}
 }

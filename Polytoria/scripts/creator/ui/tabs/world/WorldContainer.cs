@@ -109,7 +109,7 @@ public sealed partial class WorldContainer : SubViewportContainer
 		if (World.SessionType != World.SessionTypeEnum.Creator) return false;
 		IDragDataUnion? dragData = DragData.Deserialize(data);
 
-		if (dragData is FileDragData fd)
+		if (dragData is FileDragData fd && fd.Files.Length > 0)
 		{
 			string targetFile = fd.Files[0];
 			string fileExt = targetFile.GetExtension();
