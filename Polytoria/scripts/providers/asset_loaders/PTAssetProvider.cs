@@ -22,18 +22,93 @@ public class PTAssetProvider : IAssetProvider
 	private const string ServeAudioURL = RootUrl + "serve-audio/";
 	private readonly PTHttpClient _client = new();
 
+	/// <summary>
+	/// Where local asset overrides are looked for. Defaults to a "local_assets"
+	/// folder beside the project; POLYTORIA_LOCAL_ASSETS overrides it.
+	/// </summary>
+	private static string? LocalAssetRoot
+	{
+		get
+		{
+			string fromEnv = System.Environment.GetEnvironmentVariable("POLYTORIA_LOCAL_ASSETS") ?? "";
+			if (!string.IsNullOrWhiteSpace(fromEnv))
+			{
+				return fromEnv;
+			}
+			return null;
+		}
+	}
+
+	private static readonly System.Collections.Generic.Dictionary<ResourceType, string> LocalFolders = new()
+	{
+		{ ResourceType.Mesh, "meshes" },
+		{ ResourceType.Audio, "audio" },
+		{ ResourceType.Decal, "decals" },
+	};
+
+	/// <summary>
+	/// Read an asset from disk instead of the store, if one has been put there
+	/// under its id. Uploading a mesh needs a paid account, which makes it awkward
+	/// to try anything out before committing money, so an id can be satisfied by a
+	/// file named after it - local_assets/meshes/900001.glb and so on.
+	/// Returns null when there is no local override, and the normal path runs.
+	/// </summary>
+	private static byte[]? ReadLocalAsset(CacheItem item)
+	{
+		string? root = LocalAssetRoot;
+		if (root == null || !LocalFolders.TryGetValue(item.Type, out string? folder))
+		{
+			return null;
+		}
+
+		string[] extensions = item.Type switch
+		{
+			ResourceType.Mesh => [".glb", ".gltf"],
+			ResourceType.Audio => [".mp3"],
+			_ => [".png", ".jpg"],
+		};
+
+		foreach (string extension in extensions)
+		{
+			string path = System.IO.Path.Combine(root, folder, item.ID + extension);
+			if (System.IO.File.Exists(path))
+			{
+				try
+				{
+					return System.IO.File.ReadAllBytes(path);
+				}
+				catch (System.Exception ex)
+				{
+					PT.PrintErr($"Could not read local asset {path}: {ex.Message}");
+					return null;
+				}
+			}
+		}
+		return null;
+	}
+
 	public async Task<CacheItem> LoadResource(CacheItem item)
 	{
 #if CREATOR
 		_client.DefaultRequestHeaders["Authorization"] = PolyCreatorAPI.Token;
 #endif
 
-		string url = GetAssetServeURL(item.ID, item.Type);
-		ServeResponse response = await _client.GetFromJsonAsync(url, ServeResponseGenerationContext.Default.ServeResponse);
-		byte[] buffer = await _client.GetByteArrayAsync(response.Url);
+		byte[]? local = ReadLocalAsset(item);
+		byte[] buffer;
+		if (local != null)
+		{
+			buffer = local;
+			item.DirectURL = "";
+		}
+		else
+		{
+			string url = GetAssetServeURL(item.ID, item.Type);
+			ServeResponse response = await _client.GetFromJsonAsync(url, ServeResponseGenerationContext.Default.ServeResponse);
+			buffer = await _client.GetByteArrayAsync(response.Url);
+			item.DirectURL = response.Url;
+		}
 
 		item.SizeBytes = buffer.LongLength;
-		item.DirectURL = response.Url;
 
 		CacheItem result;
 		switch (item.Type)
