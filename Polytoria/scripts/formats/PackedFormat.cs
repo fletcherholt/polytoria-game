@@ -401,6 +401,49 @@ public static partial class PackedFormat
 		return JsonSerializer.Deserialize(content, ProjectJSONGenerationContext.Default.CreatorProjectMetadata);
 	}
 
+	/// <summary>
+	/// Populate a project's files and asset index without loading its world.
+	///
+	/// A networked client receives the datamodel over the wire and never opens the
+	/// .ptpacked, so it has none of the project's own files - and an asset carried
+	/// in the project is therefore unresolvable there, however well it resolves on
+	/// the server. This gives a client the same file table without touching the
+	/// world it has been sent.
+	/// </summary>
+	public static void LoadPackedAssets(World root, byte[] data)
+	{
+		using MemoryStream stream = new(data);
+		using ZipArchive archive = new(stream, ZipArchiveMode.Read);
+
+		Dictionary<string, byte[]> files = [];
+		foreach (ZipArchiveEntry entry in archive.Entries)
+		{
+			if (entry.FullName.EndsWith('/')) continue;
+			using Stream entryStream = entry.Open();
+			using MemoryStream ms = new();
+			entryStream.CopyTo(ms);
+			files[entry.FullName.SanitizePath()] = ms.ToArray();
+		}
+
+		root.IO.FileStructure = files;
+		Polytoria.Datamodel.Services.IOService.Active = root.IO;
+
+		if (files.TryGetValue("index.json", out byte[]? indexBytes))
+		{
+			string raw = System.Text.Encoding.UTF8.GetString(indexBytes);
+			Dictionary<string, string>? indexToFile = JsonSerializer.Deserialize(raw, ProjectJSONGenerationContext.Default.DictionaryStringString);
+			if (indexToFile != null)
+			{
+				root.IO.IndexToFile = indexToFile;
+				root.IO.FileToIndex.Clear();
+				foreach (KeyValuePair<string, string> item in indexToFile)
+				{
+					root.IO.FileToIndex[item.Value] = item.Key;
+				}
+			}
+		}
+	}
+
 	public static WorldData LoadPackedWorld(World root, byte[] data, string? entryPath = null)
 	{
 		using MemoryStream stream = new(data);

@@ -42,6 +42,9 @@ public sealed partial class ClientEntry : Node3D
 	public bool IsNetEssentialsReady { get; private set; } = false;
 	private readonly List<int> _clientProcesses = [];
 	public bool IsSoloTest = false;
+	/// The .ptpacked this run was started with, passed on to any client spawned
+	/// below so it can resolve assets carried in the project.
+	private string? _soloPackPath;
 
 	public int TestUserID = 1144;
 	public int TestClientCount = 0;
@@ -171,6 +174,7 @@ public sealed partial class ClientEntry : Node3D
 			isServer = true;
 			IsSoloTest = true;
 			worldPath = soloPath;
+			_soloPackPath = soloPath;
 		}
 #endif
 
@@ -311,6 +315,23 @@ public sealed partial class ClientEntry : Node3D
 			};
 		}
 #endif
+
+		// A client is sent the datamodel but never the project's files, so an asset
+		// carried in the project cannot be resolved there - and this has to happen
+		// after the world is set up, because Root.IO does not exist before then.
+		if (cmdargs.TryGetValue("assets", out string? assetsPath) && !string.IsNullOrWhiteSpace(assetsPath))
+		{
+			try
+			{
+				Polytoria.Formats.PackedFormat.LoadPackedAssets(Root, System.IO.File.ReadAllBytes(
+					ProjectSettings.GlobalizePath(assetsPath)));
+				PT.Print("Loaded project assets from ", assetsPath);
+			}
+			catch (Exception ex)
+			{
+				PT.PrintErr("Could not load project assets: ", ex.Message);
+			}
+		}
 
 		PT.Print("World setup!");
 
@@ -538,6 +559,11 @@ public sealed partial class ClientEntry : Node3D
 		string logFilePath = abs.PathJoin(plrID + ".txt");
 
 		List<string> args = ["--windowed", "--log-file", logFilePath, "-network", "client", "-id", plrID.ToString(), "-ltchild", "-port", port.ToString()];
+
+		if (!string.IsNullOrWhiteSpace(_soloPackPath))
+		{
+			args.AddRange(["-assets", _soloPackPath]);
+		}
 
 #if CREATOR
 		if (!string.IsNullOrWhiteSpace(_creatorTestToken))
