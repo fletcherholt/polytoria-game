@@ -22,23 +22,6 @@ public class PTAssetProvider : IAssetProvider
 	private const string ServeAudioURL = RootUrl + "serve-audio/";
 	private readonly PTHttpClient _client = new();
 
-	/// <summary>
-	/// Where local asset overrides are looked for. Defaults to a "local_assets"
-	/// folder beside the project; POLYTORIA_LOCAL_ASSETS overrides it.
-	/// </summary>
-	private static string? LocalAssetRoot
-	{
-		get
-		{
-			string fromEnv = System.Environment.GetEnvironmentVariable("POLYTORIA_LOCAL_ASSETS") ?? "";
-			if (!string.IsNullOrWhiteSpace(fromEnv))
-			{
-				return fromEnv;
-			}
-			return null;
-		}
-	}
-
 	private static readonly System.Collections.Generic.Dictionary<ResourceType, string> LocalFolders = new()
 	{
 		{ ResourceType.Mesh, "meshes" },
@@ -47,16 +30,43 @@ public class PTAssetProvider : IAssetProvider
 	};
 
 	/// <summary>
-	/// Read an asset from disk instead of the store, if one has been put there
-	/// under its id. Uploading a mesh needs a paid account, which makes it awkward
-	/// to try anything out before committing money, so an id can be satisfied by a
-	/// file named after it - local_assets/meshes/900001.glb and so on.
-	/// Returns null when there is no local override, and the normal path runs.
+	/// Satisfy an asset id from the project itself rather than the store.
+	///
+	/// Uploading a mesh needs a paid subscription, which makes it awkward to try
+	/// anything out before committing money - the point of issue #25. A file
+	/// carried in the project under that id is used instead when there is one.
+	///
+	/// Two places are checked. First the project's own file index, which is the
+	/// one that matters: a file with a .meta giving it an id is packed into the
+	/// .ptpacked and is present in every process that loads it, server and client
+	/// alike, with nothing to configure. Second, a folder named by
+	/// POLYTORIA_LOCAL_ASSETS, which is convenient while iterating.
+	///
+	/// Returns null when there is no local copy, and the normal store path runs.
 	/// </summary>
 	private static byte[]? ReadLocalAsset(CacheItem item)
 	{
-		string? root = LocalAssetRoot;
-		if (root == null || !LocalFolders.TryGetValue(item.Type, out string? folder))
+		if (!LocalFolders.TryGetValue(item.Type, out string? folder))
+		{
+			return null;
+		}
+
+		// In the project, by id. Works everywhere the project does.
+		try
+		{
+			byte[]? packed = Polytoria.Datamodel.Services.IOService.Active?.ReadAssetBytesFromID(item.ID.ToString());
+			if (packed != null && packed.Length > 0)
+			{
+				return packed;
+			}
+		}
+		catch (System.Exception)
+		{
+			// No project loaded yet, or no such id: fall through.
+		}
+
+		string root = System.Environment.GetEnvironmentVariable("POLYTORIA_LOCAL_ASSETS") ?? "";
+		if (string.IsNullOrWhiteSpace(root))
 		{
 			return null;
 		}

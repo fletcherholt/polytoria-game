@@ -429,6 +429,7 @@ public static partial class PackedFormat
 		}
 
 		root.IO.FileStructure = files;
+		Polytoria.Datamodel.Services.IOService.Active = root.IO;
 
 		// Read index
 		if (files.TryGetValue("index.json", out byte[]? indexBytes))

@@ -22,6 +22,16 @@ public sealed partial class IOService : Instance
 	private const string PolyCreatorTempPath = "polyc_temp";
 	private static readonly string[] AllowedExtensions = ["poly", "ptmd", "model", "lua", "luau", "json", "txt"];
 
+	/// <summary>
+	/// The IO service of the most recently loaded project.
+	///
+	/// The asset loader needs to reach a project's own files to satisfy an asset id
+	/// from them, and it has no instance to work from - it is a plain provider on a
+	/// background thread. World.Current is no use there either: it is a Creator
+	/// concept and is null in a standalone client or server.
+	/// </summary>
+	public static IOService? Active { get; internal set; }
+
 	internal Dictionary<string, byte[]> FileStructure = [];
 	internal Dictionary<string, string> FileToIndex = [];
 	internal Dictionary<string, string> IndexToFile = [];
@@ -152,6 +162,40 @@ public sealed partial class IOService : Instance
 		string? path = GetPathFromID(id);
 		if (path == null) return null;
 		return ReadBytesFromPath(path);
+	}
+
+	/// <summary>
+	/// The bytes of a project file by id, for the engine's own use.
+	///
+	/// ReadBytesFromPath refuses any extension outside a small whitelist, which is
+	/// there to stop a script reading whatever it likes out of a project. The asset
+	/// loader is not a script, and the files it wants - .glb and the rest - are
+	/// deliberately not on that list, so it comes through here instead. Nothing
+	/// script-reachable calls this.
+	/// </summary>
+	internal byte[]? ReadAssetBytesFromID(string id)
+	{
+		string? path = GetPathFromID(id);
+		if (path == null) return null;
+		if (FileStructure.TryGetValue(path, out byte[]? packed)) return packed;
+#if CREATOR
+		try
+		{
+			if (Root?.LinkedSession?.ProjectFolderPath is string folder)
+			{
+				string full = Path.GetFullPath(Path.Join(folder, path)).SanitizePath();
+				if (PathUtils.IsPathInsideDirectory(full, folder) && File.Exists(full))
+				{
+					return File.ReadAllBytes(full);
+				}
+			}
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+#endif
+		return null;
 	}
 
 
