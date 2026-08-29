@@ -157,6 +157,19 @@ public partial class CharacterModel : Dynamic
 		}
 	}
 
+	// The tool-hold arm pose, reachable from Luau. The blend has always existed -
+	// equipping a Tool set it to raise the right arm - but a game that carries its
+	// weapon without a Tool had no way to reach it, so the arm hung limp however the
+	// weapon moved. A float rather than a bool on purpose: intermediate values are
+	// real intermediate arm positions, which is what lets a script animate the arm
+	// through a swing.
+	[ScriptMethod]
+	public void SetToolHold(bool rightHand, float amount)
+	{
+		SetBlendValue(rightHand ? CharacterModelBlendEnum.ToolHoldRight : CharacterModelBlendEnum.ToolHoldLeft,
+			Godot.Mathf.Clamp(amount, 0f, 1f));
+	}
+
 	[NetRpc(AuthorityMode.Authority, TransferMode = TransferMode.Reliable)]
 	private void NetSetBlendValue(int blendName, float blendValue)
 	{
